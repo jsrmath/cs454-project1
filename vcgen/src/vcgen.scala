@@ -31,6 +31,17 @@ object VCGen {
   case class BConj(left: BoolExp, right: BoolExp) extends BoolExp
   case class BParens(b: BoolExp) extends BoolExp
 
+  /* Assetions, i.e. preconditions, postconditions, and invariants */
+  trait Assertion
+
+  case class AssnCmp(cmp: Comparison) extends Assertion
+  case class AssnNot(c: Assertion) extends Assertion
+  case class AssnDisj(left: Assertion, right: Assertion) extends Assertion
+  case class AssnConj(left: Assertion, right: Assertion) extends Assertion
+  case class AssnImp(left: Assertion, right: Assertion) extends Assertion
+  case class AssnQuant(name: String, ids: List[String], exp: Assertion) extends Assertion
+  case class AssnParens(c: Assertion) extends Assertion
+  case class AssnTrue() extends Assertion
 
   /* Statements and blocks. */
   trait Statement
@@ -40,11 +51,11 @@ object VCGen {
   case class Write(x: String, ind: ArithExp, value: ArithExp) extends Statement
   case class ParAssign(x1: String, x2: String, value1: ArithExp, value2: ArithExp) extends Statement
   case class If(cond: BoolExp, th: Block, el: Block) extends Statement
-  case class While(cond: BoolExp, body: Block) extends Statement
+  case class While(cond: BoolExp, inv: Assertion, body: Block) extends Statement
 
 
   /* Complete programs. */
-  type Program = Product2[String, Block]
+  type Program = Product4[String, Assertion, Assertion, Block]
 
 
   object ImpParser extends RegexParsers {
@@ -94,6 +105,33 @@ object VCGen {
       }
     def bexp  : Parser[BoolExp] = bdisj
 
+    /* Parsing for Assertion. */
+    def aquant : Parser[Assertion] =
+      ("forall" | "exists") ~ rep(pvar) ~ ("," ~> assn) ^^ { 
+        case n ~ v ~ e => AssnQuant(n, v, e)
+      }
+    def aatom  : Parser[Assertion] =
+      "(" ~> assn <~ ")" | comp ^^ { AssnCmp(_) } | "!" ~> aatom ^^ { AssnNot(_) } | aquant
+    def aconj  : Parser[Assertion] =
+      aatom ~ rep("&&" ~> aatom) ^^ {
+        case left ~ list => (left /: list) { AssnConj(_, _) }
+      }
+    def adisj  : Parser[Assertion] =
+      aconj ~ rep("||" ~> aconj) ^^ {
+        case left ~ list => (left /: list) { AssnDisj(_, _) }
+      }
+    def aimp   : Parser[Assertion] =
+      adisj ~ rep("==>" ~> adisj) ^^ {
+        case left ~ list => (left /: list) { AssnImp(_, _) }
+      }
+    def assn   : Parser[Assertion] = aimp
+
+    def assnlist(str: String) : Parser[Assertion] =
+      rep(str ~> assn) ^^ { 
+        case first :: rest => (first /: rest) { AssnConj(_, _) }
+        case Nil => AssnTrue()
+      }
+
     /* Parsing for Statement and Block. */
     def block : Parser[Block] = rep(stmt)
     def stmt  : Parser[Statement] =
@@ -112,14 +150,14 @@ object VCGen {
       ("if" ~> bexp <~ "then") ~ (block <~ "end") ^^ {
         case c ~ t => If(c, t, Nil)
       } |
-      ("while" ~> (bexp /* ~ rep("inv" ~ assn) */) <~ "do") ~ (block <~ "end") ^^ {
-        case c ~ b => While(c, b)
+      ("while" ~> bexp) ~ (assnlist("inv") <~ "do") ~ (block <~ "end") ^^ {
+        case c ~ i ~ b => While(c, i, b)
       }
 
     /* Parsing for Program. */
-    def prog   : Parser[Program] =
-      ("program" ~> pvar <~ "is") ~ (block <~ "end") ^^ {
-        case n ~ b => (n, b)
+    def prog      : Parser[Program] =
+      ("program" ~> pvar) ~ assnlist("pre") ~ assnlist("post") ~ ("is" ~> block <~ "end") ^^ {
+        case n ~ pre ~ post ~ b => (n, pre, post, b)
       }
   }
 
