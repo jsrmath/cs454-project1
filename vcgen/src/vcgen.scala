@@ -16,6 +16,7 @@ object VCGen {
   case class Div(left: ArithExp, right: ArithExp) extends ArithExp
   case class Mod(left: ArithExp, right: ArithExp) extends ArithExp
   case class Parens(a: ArithExp) extends ArithExp
+  case class WriteExp(x: String, ind: ArithExp, value: ArithExp) extends ArithExp
 
 
   /* Comparisons of arithmetic expressions. */
@@ -42,6 +43,7 @@ object VCGen {
   case class AssnQuant(name: String, ids: List[String], exp: Assertion) extends Assertion
   case class AssnParens(c: Assertion) extends Assertion
   case class AssnTrue() extends Assertion
+  case class AssnFalse() extends Assertion
 
   /* Statements and blocks. */
   trait Statement
@@ -161,9 +163,135 @@ object VCGen {
       }
   }
 
+  /* Guarded Commands */
+  trait GuardedCommand
+  type GCProgram = List[GuardedCommand]
+
+  case class GCAssume(assn: Assertion) extends GuardedCommand
+  case class GCAssert(assn: Assertion) extends GuardedCommand
+  case class GCHavoc(id: Var) extends GuardedCommand
+  case class GCBranch(left: GCProgram, right: GCProgram) extends GuardedCommand
+
+  var tmpCount = -1
+
+  def getFreshVariable(): String = {
+    tmpCount += 1
+    "_tmp" + tmpCount
+  }
+
+  def replaceVarInExp(exp: ArithExp, oldVar: String, newVar: String): ArithExp = {
+    exp match {
+      case Num(value) => Num(value)
+      case Var(name) => Var(if (name == oldVar) newVar else name)
+      case Read(name, ind) => Read(name, replaceVarInExp(ind, oldVar, newVar))
+      case Add(left, right) => Add(replaceVarInExp(left, oldVar, newVar), replaceVarInExp(right, oldVar, newVar))
+      case Sub(left, right) => Sub(replaceVarInExp(left, oldVar, newVar), replaceVarInExp(right, oldVar, newVar))
+      case Mul(left, right) => Mul(replaceVarInExp(left, oldVar, newVar), replaceVarInExp(right, oldVar, newVar))
+      case Div(left, right) => Div(replaceVarInExp(left, oldVar, newVar), replaceVarInExp(right, oldVar, newVar))
+      case Mod(left, right) => Mod(replaceVarInExp(left, oldVar, newVar), replaceVarInExp(right, oldVar, newVar))
+      case Parens(a) => Parens(replaceVarInExp(a, oldVar, newVar))
+      case WriteExp(a, i, v) =>
+        WriteExp(if (a == oldVar) newVar else a, replaceVarInExp(i, oldVar, newVar), replaceVarInExp(v, oldVar, newVar))
+    }
+  }
+
+  def getModifiedVars(block: Block): List[String] = {
+    val empty: List[String] = List()
+    block.foldLeft(empty) { (vars: List[String], s: Statement) => s match {
+      case Assign(x, _) => x :: vars
+      case Write(a, _, _) => a :: vars
+      case ParAssign(x1, x2, _, _) => x1 :: x2 :: vars
+      case If(_, th, el) => getModifiedVars(th) ++ getModifiedVars(el) ++ vars
+      case While(_, _, body) => getModifiedVars(body) ++ vars
+    }}
+  }
+
+  def assnFromBool(bool: BoolExp): Assertion = {
+    bool match {
+      case BCmp(cmp) => AssnCmp(cmp)
+      case BNot(b) => AssnNot(assnFromBool(b))
+      case BDisj(left, right) => AssnDisj(assnFromBool(left), assnFromBool(right))
+      case BConj(left, right) => AssnConj(assnFromBool(left), assnFromBool(right))
+      case BParens(b) => AssnParens(assnFromBool(b))
+    }
+  }
+
+  def makeGuardedCommandFromAssign(x: String, e: ArithExp): GCProgram = {
+    val tmp = getFreshVariable()
+    List(
+      GCAssume(AssnCmp((Var(tmp), "=", Var(x)))),
+      GCHavoc(Var(x)),
+      GCAssume(AssnCmp((Var(x), "=", replaceVarInExp(e, x, tmp))))
+    )
+  }
+
+  def makeGuardedCommandFromWrite(x: String, ind: ArithExp, value: ArithExp): GCProgram = {
+    makeGuardedCommandFromAssign(x, WriteExp(x, ind, value))
+  }
+
+  def makeGuardedCommandFromParAssign(x1: String, x2: String, e1: ArithExp, e2: ArithExp): GCProgram = {
+    val tmp1 = getFreshVariable()
+    val tmp2 = getFreshVariable()
+    List(
+      GCAssume(AssnCmp((Var(tmp1), "=", Var(x1)))),
+      GCAssume(AssnCmp((Var(tmp2), "=", Var(x2)))),
+      GCHavoc(Var(x1)),
+      GCHavoc(Var(x2)),
+      GCAssume(AssnCmp((Var(x1), "=", replaceVarInExp(replaceVarInExp(e1, x1, tmp1), x2, tmp2)))),
+      GCAssume(AssnCmp((Var(x2), "=", replaceVarInExp(replaceVarInExp(e2, x1, tmp1), x2, tmp2))))
+    )
+  }
+
+  def makeGuardedCommandFromIf(cond: BoolExp, th: Block, el: Block): GCProgram = {
+    val assnCond = assnFromBool(cond)
+    List(GCBranch(
+      GCAssume(assnCond) :: makeGuardedCommand(th),
+      GCAssume(AssnNot(assnCond)) :: makeGuardedCommand(el)
+    ))
+  }
+
+  def makeGuardedCommandFromWhile(cond: BoolExp, inv: Assertion, body: Block): GCProgram = {
+    val modifiedVars = getModifiedVars(body)
+    val assnCond = assnFromBool(cond)
+    GCAssert(inv) ::
+    modifiedVars.map((x) => GCHavoc(Var(x))) ++
+    List(
+      GCAssume(inv),
+      GCBranch(
+        (
+          GCAssume(assnCond) ::
+          makeGuardedCommand(body) ++
+          List(
+            GCAssert(inv),
+            GCAssume(AssnFalse())
+          )
+        ),
+        List(
+          GCAssume(AssnNot(assnCond))
+        )
+      )
+    )
+  }
+
+  def makeGuardedCommandFromStatement(statement: Statement): GCProgram = {
+    statement match {
+      case Assign(x, value) => makeGuardedCommandFromAssign(x, value)
+      case Write(x, ind, value) => makeGuardedCommandFromWrite(x, ind, value)
+      case ParAssign(x1, x2, value1, value2) => makeGuardedCommandFromParAssign(x1, x2, value1, value2)
+      case If(cond, th, el) => makeGuardedCommandFromIf(cond, th, el)
+      case While(cond, inv, body) => makeGuardedCommandFromWhile(cond, inv, body)
+    }
+  }
+
+  def makeGuardedCommand(b: Block): GCProgram = {
+    b.toList.flatMap(makeGuardedCommandFromStatement)
+  }
+
   def main(args: Array[String]): Unit = {
     val reader = new FileReader(args(0))
     import ImpParser._;
-    println(parseAll(prog, reader))
+    val p = parseAll(prog, reader).get
+    val gc = makeGuardedCommand(p._4)
+    println(gc)
   }
 }
