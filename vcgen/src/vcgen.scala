@@ -195,6 +195,24 @@ object VCGen {
     }
   }
 
+  def replaceVarInAssertion(assn: Assertion, oldVar: String, newVar: String): Assertion = {
+    assn match {
+      case AssnCmp((a1, s, a2))
+        => AssnCmp((replaceVarInExp(a1, oldVar, newVar), s, replaceVarInExp(a2, oldVar, newVar)))
+      case AssnNot(assn) => AssnNot(replaceVarInAssertion(assn, oldVar, newVar))
+      case AssnDisj(left, right)
+        => AssnDisj(replaceVarInAssertion(left, oldVar, newVar), replaceVarInAssertion(right, oldVar, newVar))
+      case AssnConj(left, right)
+        => AssnConj(replaceVarInAssertion(left, oldVar, newVar), replaceVarInAssertion(right, oldVar, newVar))
+      case AssnImp(left, right)
+        => AssnImp(replaceVarInAssertion(left, oldVar, newVar), replaceVarInAssertion(right, oldVar, newVar))
+      case AssnQuant(name, ids, assn)
+        => AssnQuant(name, ids, replaceVarInAssertion(assn, oldVar, newVar))
+      case AssnParens(assn) => AssnParens(replaceVarInAssertion(assn, oldVar, newVar))
+      case x => x
+    }
+  }
+
   def getModifiedVars(block: Block): List[String] = {
     val empty: List[String] = List()
     block.foldLeft(empty) { (vars: List[String], s: Statement) => s match {
@@ -287,11 +305,22 @@ object VCGen {
     b.toList.flatMap(makeGuardedCommandFromStatement)
   }
 
+  def findWeakestPrecondition(p: GCProgram, b: Assertion): Assertion = {
+    p.foldRight(b) { (c: GuardedCommand, b: Assertion) => c match {
+      case GCAssume(assn) => AssnImp(assn, b)
+      case GCAssert(assn) => AssnConj(assn, b)
+      case GCHavoc(Var(x)) => replaceVarInAssertion(b, x, getFreshVariable())
+      case GCBranch(p1, p2) => AssnConj(findWeakestPrecondition(p1, b), findWeakestPrecondition(p2, b))
+    }}
+  }
+
   def main(args: Array[String]): Unit = {
     val reader = new FileReader(args(0))
     import ImpParser._;
     val p = parseAll(prog, reader).get
     val gc = makeGuardedCommand(p._4)
-    println(gc)
+    val ch = GCAssume(p._2) :: gc ++ List(GCAssert(p._3))
+    val wp = findWeakestPrecondition(ch, AssnTrue())
+    println(wp)
   }
 }
