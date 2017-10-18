@@ -2,5 +2,5 @@ program test
   pre a[0] = 0
   post a[0] = 5
 is
-  a[0] := 4;
+  a[0] := 5;
 end

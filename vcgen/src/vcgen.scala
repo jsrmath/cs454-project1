@@ -427,7 +427,9 @@ object VCGen {
     val varDecls = vars.map((v) => "(declare-const " + v + " Int)").mkString("\n")
     val arrays = getAllUniqueArraysInAssertion(p)
     val arrayDecls = arrays.map((a) => "(declare-const " + a + " (Array Int Int))").mkString("\n")
-    val body = "(assert " + makeZ3Body(AssnQuant("forall", vars ++ arrays, p), arrays) + ")"
+
+    // To avoid having to use forall quantifiers, we will negate the whole thing and then negate the z3 output
+    val body = "(assert (not " + makeZ3Body(p, arrays) + "))"
     List(varDecls, arrayDecls, body, "(check-sat)").mkString("\n")
   }
 

@@ -5,9 +5,10 @@ is
   p := 0;
   x := 0;
   while x < n
+    inv x <= n
     inv p = x * m
   do
-    x := x + 1;
+    x := x + 2;
     p := p + m;
   end
 end
