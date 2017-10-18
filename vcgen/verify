@@ -1,0 +1,2 @@
+#!/bin/bash
+scala -cp classes VCGen $1 | z3 -in

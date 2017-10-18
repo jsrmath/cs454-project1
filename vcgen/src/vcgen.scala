@@ -183,7 +183,7 @@ object VCGen {
     exp match {
       case Num(value) => Num(value)
       case Var(name) => Var(if (name == oldVar) newVar else name)
-      case Read(name, ind) => Read(name, replaceVarInExp(ind, oldVar, newVar))
+      case Read(name, ind) => Read((if (name == oldVar) newVar else name), replaceVarInExp(ind, oldVar, newVar))
       case Add(left, right) => Add(replaceVarInExp(left, oldVar, newVar), replaceVarInExp(right, oldVar, newVar))
       case Sub(left, right) => Sub(replaceVarInExp(left, oldVar, newVar), replaceVarInExp(right, oldVar, newVar))
       case Mul(left, right) => Mul(replaceVarInExp(left, oldVar, newVar), replaceVarInExp(right, oldVar, newVar))
@@ -222,6 +222,70 @@ object VCGen {
       case If(_, th, el) => getModifiedVars(th) ++ getModifiedVars(el) ++ vars
       case While(_, _, body) => getModifiedVars(body) ++ vars
     }}
+  }
+
+  def getAllVarsInArithExp(aexp: ArithExp): List[String] = {
+    aexp match {
+      case Num(value) => List()
+      case Var(name) => List(name)
+      case Read(name, ind) => getAllVarsInArithExp(ind)
+      case Add(left, right) => getAllVarsInArithExp(left) ++ getAllVarsInArithExp(right)
+      case Sub(left, right) => getAllVarsInArithExp(left) ++ getAllVarsInArithExp(right)
+      case Mul(left, right) => getAllVarsInArithExp(left) ++ getAllVarsInArithExp(right)
+      case Div(left, right) => getAllVarsInArithExp(left) ++ getAllVarsInArithExp(right)
+      case Mod(left, right) => getAllVarsInArithExp(left) ++ getAllVarsInArithExp(right)
+      case Parens(a) => getAllVarsInArithExp(a)
+      case WriteExp(a, i, v) => getAllVarsInArithExp(i) ++ getAllVarsInArithExp(v)
+    }
+  }
+
+  def getAllVarsInAssertion(assn: Assertion): List[String] = {
+    assn match {
+      case AssnCmp((a1, s, a2)) => getAllVarsInArithExp(a1) ++ getAllVarsInArithExp(a2)
+      case AssnNot(assn) => getAllVarsInAssertion(assn)
+      case AssnDisj(left, right) => getAllVarsInAssertion(left) ++ getAllVarsInAssertion(right)
+      case AssnConj(left, right) => getAllVarsInAssertion(left) ++ getAllVarsInAssertion(right)
+      case AssnImp(left, right) => getAllVarsInAssertion(left) ++ getAllVarsInAssertion(right)
+      case AssnQuant(name, ids, assn) => ids ++ getAllVarsInAssertion(assn)
+      case AssnParens(assn) => getAllVarsInAssertion(assn)
+      case x => List()
+    }
+  }
+
+  def getAllUniqueVarsInAssertion(assn: Assertion): List[String] = {
+    getAllVarsInAssertion(assn).distinct
+  }
+
+  def getAllArraysInArithExp(aexp: ArithExp): List[String] = {
+    aexp match {
+      case Num(value) => List()
+      case Var(name) => List()
+      case Read(a, i) => List(a)
+      case Add(left, right) => getAllArraysInArithExp(left) ++ getAllArraysInArithExp(right)
+      case Sub(left, right) => getAllArraysInArithExp(left) ++ getAllArraysInArithExp(right)
+      case Mul(left, right) => getAllArraysInArithExp(left) ++ getAllArraysInArithExp(right)
+      case Div(left, right) => getAllArraysInArithExp(left) ++ getAllArraysInArithExp(right)
+      case Mod(left, right) => getAllArraysInArithExp(left) ++ getAllArraysInArithExp(right)
+      case Parens(a) => getAllArraysInArithExp(a)
+      case WriteExp(a, i, v) => a :: getAllArraysInArithExp(i) ++ getAllArraysInArithExp(v)
+    }
+  }
+
+  def getAllArraysInAssertion(assn: Assertion): List[String] = {
+    assn match {
+      case AssnCmp((a1, s, a2)) => getAllArraysInArithExp(a1) ++ getAllArraysInArithExp(a2)
+      case AssnNot(assn) => getAllArraysInAssertion(assn)
+      case AssnDisj(left, right) => getAllArraysInAssertion(left) ++ getAllArraysInAssertion(right)
+      case AssnConj(left, right) => getAllArraysInAssertion(left) ++ getAllArraysInAssertion(right)
+      case AssnImp(left, right) => getAllArraysInAssertion(left) ++ getAllArraysInAssertion(right)
+      case AssnQuant(name, ids, assn) => getAllArraysInAssertion(assn)
+      case AssnParens(assn) => getAllArraysInAssertion(assn)
+      case x => List()
+    }
+  }
+
+  def getAllUniqueArraysInAssertion(assn: Assertion): List[String] = {
+    getAllArraysInAssertion(assn).distinct
   }
 
   def assnFromBool(bool: BoolExp): Assertion = {
@@ -314,6 +378,97 @@ object VCGen {
     }}
   }
 
+  def makeZ3ArithExp(a: ArithExp): String = {
+    a match {
+      case Num(value) => value.toString
+      case Var(name) => name
+      case Read(a, i) => "(select " + a + " " + makeZ3ArithExp(i) + ")"
+      case Add(left, right) => "(+ " + makeZ3ArithExp(left) + " " + makeZ3ArithExp(right) + ")"
+      case Sub(left, right) => "(- " + makeZ3ArithExp(left) + " " + makeZ3ArithExp(right) + ")"
+      case Mul(left, right) => "(* " + makeZ3ArithExp(left) + " " + makeZ3ArithExp(right) + ")"
+      case Div(left, right) => "(/ " + makeZ3ArithExp(left) + " " + makeZ3ArithExp(right) + ")"
+      case Mod(left, right) => "(mod " + makeZ3ArithExp(left) + " " + makeZ3ArithExp(right) + ")"
+      case Parens(a) => "(" + makeZ3ArithExp(a) + ")"
+      case WriteExp(a, i, v) => "(store " + List(a, makeZ3ArithExp(i), makeZ3ArithExp(v)).mkString(" ") + ")"
+    }
+  }
+
+  def makeZ3quantIDs(ids: List[String], arrays: List[String]): String = {
+    "(" + ids.map((x) =>
+      "(" + x + " " + (if (arrays.contains(x)) "(Array Int Int)" else "Int") + ")"
+    ).mkString(" ") + ")"
+  }
+
+  def makeZ3Cmp(a1: ArithExp, s: String, a2: ArithExp, arrays: List[String]): String = {
+    if (s == "!=") {
+      "(not (" + List("=", makeZ3ArithExp(a1), makeZ3ArithExp(a2)).mkString(" ") + "))"
+    }
+    else {
+      "(" + List(s, makeZ3ArithExp(a1), makeZ3ArithExp(a2)).mkString(" ") + ")"
+    }
+  }
+
+  def makeZ3Body(p: Assertion, arrays: List[String]): String = {
+    p match {
+      case AssnCmp((a1, s, a2)) => makeZ3Cmp(a1, s, a2, arrays)
+      case AssnNot(assn) => "(not " + makeZ3Body(assn, arrays) + ")"
+      case AssnDisj(left, right) => "(or " + makeZ3Body(left, arrays) + " " + makeZ3Body(right, arrays) + ")"
+      case AssnConj(left, right) => "(and " + makeZ3Body(left, arrays) + " " + makeZ3Body(right, arrays) + ")"
+      case AssnImp(left, right) => "(=> " + makeZ3Body(left, arrays) + " " + makeZ3Body(right, arrays) + ")"
+      case AssnQuant(name, ids, assn) => "(" + List(name, makeZ3quantIDs(ids, arrays), makeZ3Body(assn, arrays)).mkString(" ") + ")"
+      case AssnParens(assn) => "(" + makeZ3Body(assn, arrays) + ")"
+      case AssnTrue() => "true"
+      case AssnFalse() => "false"
+    }
+  }
+
+  def makeZ3(p: Assertion): String = {
+    val vars = getAllUniqueVarsInAssertion(p)
+    val varDecls = vars.map((v) => "(declare-const " + v + " Int)").mkString("\n")
+    val arrays = getAllUniqueArraysInAssertion(p)
+    val arrayDecls = arrays.map((a) => "(declare-const " + a + " (Array Int Int))").mkString("\n")
+    val body = "(assert " + makeZ3Body(AssnQuant("forall", vars ++ arrays, p), arrays) + ")"
+    List(varDecls, arrayDecls, body, "(check-sat)").mkString("\n")
+  }
+
+  def makeStringFromArithExp(a: ArithExp): String = {
+    a match {
+      case Num(value) => value.toString
+      case Var(name) => name
+      case Read(a, i) => a + "[" + makeStringFromArithExp(i) + "]"
+      case Add(left, right) => makeStringFromArithExp(left) + " + " + makeStringFromArithExp(right)
+      case Sub(left, right) => makeStringFromArithExp(left) + " - " + makeStringFromArithExp(right)
+      case Mul(left, right) => makeStringFromArithExp(left) + " * " + makeStringFromArithExp(right)
+      case Div(left, right) => makeStringFromArithExp(left) + " / " + makeStringFromArithExp(right)
+      case Mod(left, right) => makeStringFromArithExp(left) + " % " + makeStringFromArithExp(right)
+      case Parens(a) => "(" + makeStringFromArithExp(a) + ")"
+      case WriteExp(a, i, v) => a + "[" + makeStringFromArithExp(i) + "]" + " = " + makeStringFromArithExp(v)
+    }
+  }
+
+  def makeStringFromAssertion(assn: Assertion): String = {
+    assn match {
+      case AssnCmp((a1, s, a2)) => List(makeStringFromArithExp(a1), s, makeStringFromArithExp(a2)).mkString(" ")
+      case AssnNot(assn) => "!(" + makeStringFromAssertion(assn) + ")"
+      case AssnDisj(left, right) => "(" + makeStringFromAssertion(left) + " || " + makeStringFromAssertion(right) + ")"
+      case AssnConj(left, right) => "(" + makeStringFromAssertion(left) + " && " + makeStringFromAssertion(right) + ")"
+      case AssnImp(left, right) => "(" + makeStringFromAssertion(left) + " => " + makeStringFromAssertion(right) + ")"
+      case AssnQuant(name, ids, assn) => "(" + name + " " + ids.mkString(", ") + ": " + makeStringFromAssertion(assn) + ")"
+      case AssnParens(assn) => "(" + makeStringFromAssertion(assn) + ")"
+      case AssnTrue() => "true"
+      case AssnFalse() => "false"
+    }
+  }
+
+  def makeStringFromGuardedCommand(gc: GCProgram): String = {
+    gc.map((c) => c match {
+      case GCAssume(assn) => "assume " + makeStringFromAssertion(assn)
+      case GCAssert(assn) => "assert " + makeStringFromAssertion(assn)
+      case GCHavoc(Var(x)) => "havoc " + x
+      case GCBranch(p1, p2) => "(" + makeStringFromGuardedCommand(p1) + ") [] (" + makeStringFromGuardedCommand(p2) + ")"
+    }).mkString("\n")
+  }
+
   def main(args: Array[String]): Unit = {
     val reader = new FileReader(args(0))
     import ImpParser._;
@@ -321,6 +476,7 @@ object VCGen {
     val gc = makeGuardedCommand(p._4)
     val ch = GCAssume(p._2) :: gc ++ List(GCAssert(p._3))
     val wp = findWeakestPrecondition(ch, AssnTrue())
-    println(wp)
+    val z3 = makeZ3(wp)
+    println(z3)
   }
 }
