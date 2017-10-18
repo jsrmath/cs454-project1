@@ -253,7 +253,7 @@ object VCGen {
   }
 
   def getAllUniqueVarsInAssertion(assn: Assertion): List[String] = {
-    getAllVarsInAssertion(assn).distinct
+    getAllVarsInAssertion(assn).distinct diff getAllArraysInAssertion(assn).distinct
   }
 
   def getAllArraysInArithExp(aexp: ArithExp): List[String] = {
