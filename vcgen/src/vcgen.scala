@@ -110,7 +110,7 @@ object VCGen {
     /* Parsing for Assertion. */
     def aquant : Parser[Assertion] =
       ("forall" | "exists") ~ rep(pvar) ~ ("," ~> assn) ^^ { 
-        case n ~ v ~ e => AssnQuant(n, v, e)
+        case n ~ v ~ e => makeFreshQuantifier(n, v, e)
       }
     def aatom  : Parser[Assertion] =
       "(" ~> assn <~ ")" | comp ^^ { AssnCmp(_) } | "!" ~> aatom ^^ { AssnNot(_) } | aquant
@@ -211,6 +211,14 @@ object VCGen {
       case AssnParens(assn) => AssnParens(replaceVarInAssertion(assn, oldVar, newVar))
       case x => x
     }
+  }
+
+  // Use fresh variables in quantifiers
+  def makeFreshQuantifier(name: String, oldIDs: List[String], assn: Assertion): AssnQuant = {
+    val newIDs = oldIDs.map((id) => getFreshVariable())
+    val IDPairs = oldIDs.zip(newIDs)
+    val assnWithFreshIDs = IDPairs.foldLeft(assn) {(assn, idPair) => replaceVarInAssertion(assn, idPair._1, idPair._2)}
+    return AssnQuant(name, newIDs, assnWithFreshIDs)
   }
 
   def getModifiedVars(block: Block): List[String] = {
