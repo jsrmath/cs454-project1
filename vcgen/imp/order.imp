@@ -1,4 +1,5 @@
 program order
+  pre x != y
   post x < y
 is
   if x > y then

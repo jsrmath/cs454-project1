@@ -1,6 +1,10 @@
-program count is
+program count
+  post x = 11
+is
   x := 0;
-  while x <= 10 do
+  while x <= 10
+    inv x <= 11
+  do
     x := x + 1;
   end
 end

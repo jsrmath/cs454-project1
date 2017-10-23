@@ -1,5 +1,5 @@
 program test
-  pre a[0] = 0
+  pre forall i, a[i] = 0
   post a[0] = 5
 is
   a[0] := 5;

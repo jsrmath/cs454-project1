@@ -1,0 +1,18 @@
+program max
+  pre  0 < N
+  post exists i, 0 <= i && i < N && max = a[i]
+  post forall i, (0 <= i && i < N) ==> max >= a[i]
+is
+  max := a[0];
+  i := 1;
+  while i < N
+    inv i <= N
+    inv exists j, 0 <= j && j < i && max = a[j]
+    inv forall j, (0 <= j && j < i) ==> max >= a[j]
+  do
+    if max < a[i] then
+      max := a[i];
+    end
+    i := i + 1;
+  end
+end

@@ -1,0 +1,23 @@
+program nested
+  pre  n >= 0
+  pre  m >= 0
+  post p = n * m
+is
+  p := 0;
+  x := 0;
+  y := 0;
+  while x < n
+    inv x <= n
+    inv y = 0
+    inv p = x * m
+  do
+    while y < m
+      inv y <= m
+    do
+      y := y + 1;
+      p := p + 1;
+    end
+    x := x + 1;
+    y := 0;
+  end
+end
